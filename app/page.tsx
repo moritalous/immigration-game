@@ -2,6 +2,54 @@
 
 import { useState, useEffect } from 'react'
 
+// Web Speech API型定義
+interface SpeechRecognitionAlternative {
+  readonly transcript: string
+  readonly confidence: number
+}
+
+interface SpeechRecognitionResult {
+  readonly length: number
+  item(index: number): SpeechRecognitionAlternative
+  [index: number]: SpeechRecognitionAlternative
+}
+
+interface SpeechRecognitionResultList {
+  readonly length: number
+  item(index: number): SpeechRecognitionResult
+  [index: number]: SpeechRecognitionResult
+}
+
+interface SpeechRecognitionEvent extends Event {
+  readonly results: SpeechRecognitionResultList
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  readonly error: string
+}
+
+interface SpeechRecognition extends EventTarget {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  onspeechend: (() => void) | null
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
+  start(): void
+  stop(): void
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: {
+      new (): SpeechRecognition
+    }
+    webkitSpeechRecognition?: {
+      new (): SpeechRecognition
+    }
+  }
+}
+
 // 質問データ型定義
 interface Question {
   question: string
@@ -26,19 +74,19 @@ export default function Home() {
   const [hintsShown, setHintsShown] = useState(0)
   const [status, setStatus] = useState('準備完了')
   const [result, setResult] = useState<EvaluationResult | null>(null)
-  const [recognition, setRecognition] = useState<any>(null)
+  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
 
   // 音声認識初期化
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (SpeechRecognition) {
       const recognitionInstance = new SpeechRecognition()
       recognitionInstance.lang = 'en-US'
       recognitionInstance.continuous = false
       recognitionInstance.interimResults = false
 
-      recognitionInstance.onresult = (event: any) => {
+      recognitionInstance.onresult = (event: SpeechRecognitionEvent) => {
         const transcript = event.results[0][0].transcript
         setUserAnswer(transcript)
         setStatus('回答を確認して送信してください')
@@ -49,7 +97,7 @@ export default function Home() {
         setIsRecording(false)
       }
 
-      recognitionInstance.onerror = (event: any) => {
+      recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
         setStatus(`エラー: ${event.error}`)
         setIsRecording(false)
       }
