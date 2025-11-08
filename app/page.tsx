@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 // Web Speech API型定義
 interface SpeechRecognitionAlternative {
@@ -42,10 +42,10 @@ interface SpeechRecognition extends EventTarget {
 declare global {
   interface Window {
     SpeechRecognition?: {
-      new (): SpeechRecognition
+      new(): SpeechRecognition
     }
     webkitSpeechRecognition?: {
-      new (): SpeechRecognition
+      new(): SpeechRecognition
     }
   }
 }
@@ -56,6 +56,8 @@ interface Question {
   questionJa: string
   sampleAnswer: string
   keywords: string[]
+  questionId: number
+  persona: string
 }
 
 // 評価結果型定義
@@ -69,6 +71,8 @@ export default function Home() {
   const [gameStarted, setGameStarted] = useState(false)
   const [currentQuestion, setCurrentQuestion] = useState(0)
   const [questions, setQuestions] = useState<Question[]>([])
+  const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([])
+  const [selectedDifficulty, setSelectedDifficulty] = useState<'kind' | 'normal' | 'strict'>('normal')
   const [isRecording, setIsRecording] = useState(false)
   const [userAnswer, setUserAnswer] = useState('')
   const [hintsShown, setHintsShown] = useState(0)
@@ -110,14 +114,19 @@ export default function Home() {
   const generateQuestion = async (): Promise<Question | null> => {
     try {
       setIsGenerating(true)
-      const previousQuestions = questions.map(q => q.question)
-      const response = await fetch('/api/generate-question', { 
+      const response = await fetch('/api/generate-question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ previousQuestions })
+        body: JSON.stringify({ usedQuestionIds, selectedPersona: selectedDifficulty })
       })
       const data = await response.json()
-      return data.error ? null : data
+
+      if (data.error) return null
+
+      // 使用済み質問IDを更新
+      setUsedQuestionIds(prev => [...prev, data.questionId])
+
+      return data
     } catch {
       return null
     } finally {
@@ -126,10 +135,12 @@ export default function Home() {
   }
 
   // ゲーム開始
-  const startGame = async () => {
+  const startGame = async (difficulty: 'kind' | 'normal' | 'strict') => {
+    setSelectedDifficulty(difficulty)
     setGameStarted(true)
     setCurrentQuestion(0)
     setQuestions([])
+    setUsedQuestionIds([])
     await loadQuestion(0)
   }
 
@@ -139,7 +150,7 @@ export default function Home() {
     setHintsShown(0)
     setResult(null)
     setStatus('新しい質問を生成中...')
-    
+
     const newQuestion = await generateQuestion()
     if (!newQuestion) {
       setStatus('質問の生成に失敗しました')
@@ -153,7 +164,7 @@ export default function Home() {
     })
 
     setStatus('審査官の質問を聞いてください')
-    
+
     // 音声で質問を再生
     setTimeout(() => {
       speakOfficer(newQuestion.question)
@@ -167,10 +178,10 @@ export default function Home() {
     utterance.lang = 'en-US'
     utterance.rate = 0.9
     utterance.pitch = 1.0
-    
+
     utterance.onstart = () => setStatus('🔊 審査官が話しています...')
     utterance.onend = () => setStatus('🎤 あなたの番です。回答してください')
-    
+
     synth.speak(utterance)
   }
 
@@ -185,7 +196,7 @@ export default function Home() {
   // 録音トグル
   const toggleRecording = () => {
     if (!recognition) return
-    
+
     if (!isRecording) {
       recognition.start()
       setIsRecording(true)
@@ -208,13 +219,13 @@ export default function Home() {
           keywords: question.keywords
         })
       });
-      
+
       const evaluation = await response.json();
       return evaluation;
     } catch {
-      return { 
-        score: 'partial', 
-        message: '評価中にエラーが発生しました。もう一度お試しください。' 
+      return {
+        score: 'partial',
+        message: '評価中にエラーが発生しました。もう一度お試しください。'
       };
     }
   };
@@ -223,7 +234,7 @@ export default function Home() {
   const submitAnswer = async () => {
     const currentQ = questions[currentQuestion]
     if (!currentQ) return
-    
+
     setStatus('回答を評価中...')
     const evaluationResult = await evaluateAnswer(userAnswer, currentQ)
     setResult(evaluationResult)
@@ -256,9 +267,17 @@ export default function Home() {
                 入国審査官との会話をシミュレーションします。<br />
                 AIが生成する質問に英語で回答してください。
               </p>
-              <button className="start-btn" onClick={startGame} disabled={isGenerating}>
-                {isGenerating ? '準備中...' : 'ゲーム開始'}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', alignItems: 'center' }}>
+                <button className="start-btn" style={{ width: '200px' }} onClick={() => startGame('kind')} disabled={isGenerating}>
+                  👼 Easy
+                </button>
+                <button className="start-btn" style={{ width: '200px' }} onClick={() => startGame('normal')} disabled={isGenerating}>
+                  👮‍♂️ Normal
+                </button>
+                <button className="start-btn" style={{ width: '200px' }} onClick={() => startGame('strict')} disabled={isGenerating}>
+                  👹 Hard
+                </button>
+              </div>
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: '40px' }}>
@@ -305,15 +324,19 @@ export default function Home() {
         </div>
 
         <div className="officer-section">
-          <div className="officer-avatar">👮</div>
-          
-          <div className="hints">
+          <div className="officer-avatar">
+            {currentQ.persona === 'kind' && '👼'}
+            {currentQ.persona === 'normal' && '👮‍♂️'}
+            {currentQ.persona === 'strict' && '👹'}
+          </div>
+
+          <div className="hints" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '10px' }}>
             <button className="hint-btn" onClick={() => showHint(1)}>ヒント1: 英文表示</button>
             <button className="hint-btn" onClick={() => showHint(2)} disabled={hintsShown < 1}>ヒント2: 日本語訳</button>
             <button className="hint-btn" onClick={() => showHint(3)} disabled={hintsShown < 2}>ヒント3: 模範解答</button>
             <button className="hint-btn" onClick={() => showHint(4)} disabled={hintsShown < 3}>ヒント4: 音声再生</button>
           </div>
-          
+
           {hintsShown >= 1 && (
             <div className="hint-content">
               <strong>英文:</strong> {currentQ.question}
@@ -333,23 +356,23 @@ export default function Home() {
 
         <div className="user-section">
           <div className="status">{status}</div>
-          
+
           <div className="controls">
-            <button 
+            <button
               className={`record-btn ${isRecording ? 'recording' : ''}`}
               onClick={toggleRecording}
             >
               {isRecording ? '⏹ 録音停止' : '🎤 回答を録音'}
             </button>
-            <button 
-              className="submit-btn" 
+            <button
+              className="submit-btn"
               onClick={submitAnswer}
               disabled={!userAnswer}
             >
               ✓ 回答を送信
             </button>
           </div>
-          
+
           <div className="user-answer">
             {userAnswer || 'あなたの回答がここに表示されます'}
           </div>

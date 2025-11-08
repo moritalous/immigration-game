@@ -1,47 +1,67 @@
-// import { openai } from '@ai-sdk/openai';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
-
 import { generateText } from 'ai';
+import { commonQuestions, officerPersonas } from '../../data/questions';
 
 const bedrock = createAmazonBedrock({
   region: 'ap-northeast-1',
   credentialProvider: fromNodeProviderChain(),
 });
 
-
 export async function POST(req: Request) {
-  const { previousQuestions = [] } = await req.json();
+  const { usedQuestionIds = [], selectedPersona } = await req.json();
 
-  const previousQuestionsText = previousQuestions.length > 0 
-    ? `\n\nPrevious questions already asked (DO NOT repeat these topics):\n${previousQuestions.map((q: string, i: number) => `${i + 1}. ${q}`).join('\n')}`
-    : '';
+  // 未使用の質問からランダム選択
+  const availableQuestions = commonQuestions.filter(q => !usedQuestionIds.includes(q.id));
+  if (availableQuestions.length === 0) {
+    return Response.json({ error: 'No more questions available' }, { status: 400 });
+  }
+
+  const selectedQuestion = availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
+
+  // 選択されたペルソナを使用（指定がない場合はランダム）
+  const persona = selectedPersona ? officerPersonas.find(p => p.id === selectedPersona) : officerPersonas[Math.floor(Math.random() * officerPersonas.length)];
+  if (!persona) {
+    return Response.json({ error: 'Invalid persona' }, { status: 400 });
+  }
 
   const result = await generateText({
     model: bedrock('openai.gpt-oss-20b-1:0'),
-    prompt: `Generate a single SHORT immigration officer question for English conversation practice. 
-    Return ONLY a JSON object with this exact format:
-    {
-      "question": "English question",
-      "questionJa": "Japanese translation", 
-      "sampleAnswer": "Sample English answer",
-      "keywords": ["keyword1", "keyword2", "keyword3"]
-    }
-    
-    Use these examples as reference for question length and style:
-    - "What is the purpose of your visit?"
-    - "How long will you stay in the U.S.?"
-    - "Where will you stay?"
-    - "Do you have a return ticket?"
-    - "Who are you traveling with?"
-    - "What do you do for work?"
-    - "Have you been to the U.S. before?"
-    - "How much money are you carrying?"
-    - "Are you bringing any food or agricultural products?"
-    
-    Keep questions SHORT and direct like these examples. You can use these exact questions or create similar ones.${previousQuestionsText}
-    
-    Generate a DIFFERENT topic/approach from any previous questions listed above.`,
+    prompt: `You are STRICTLY a ${persona.tone} immigration officer. You MUST maintain this exact personality throughout.
+
+Persona: ${persona.name} (${persona.tone})
+Topic: "${selectedQuestion.topic}"
+Base question: "${selectedQuestion.baseQuestion}"
+
+IMPORTANT: You MUST create a question that is ONLY ${persona.tone}. Do NOT mix other tones.
+
+CONTEXT: The traveler is attending AWS re:Invent conference in Las Vegas. Generate sample answers that reflect this specific scenario.
+
+Return ONLY a JSON object:
+{
+  "question": "English question in STRICTLY ${persona.tone} style",
+  "questionJa": "Japanese translation", 
+  "sampleAnswer": "Sample English answer for AWS re:Invent attendee",
+  "keywords": ${JSON.stringify(selectedQuestion.keywords)},
+  "questionId": ${selectedQuestion.id},
+  "persona": "${persona.id}"
+}
+
+Sample answer guidelines for AWS re:Invent context:
+- Purpose: "I'm attending AWS re:Invent conference" or "Business conference"
+- Duration: "5 days" or "One week" 
+- Hotel: "Harrah's Hotel and Casino Las Vegas" or "MGM Grand Hotel & Casino"
+- Conference: "AWS re:Invent" or "Amazon Web Services conference"
+- Job: "Software engineer" or "Cloud architect" or "IT professional"
+- Company: Use generic tech company names
+- Money: "$2000" or "$3000" for Vegas
+
+STRICT tone guidelines for ${persona.tone}:
+${persona.tone === 'friendly and polite' ? '- Use "Could you please...", "I\'d like to know...", "Would you mind..."' : ''}
+${persona.tone === 'professional and neutral' ? '- Use "What is...", "How long...", "Where will..."' : ''}
+${persona.tone === 'strict and demanding' ? '- Use "I need to know...", "Tell me...", "Explain immediately..."' : ''}
+
+You MUST use ONLY the ${persona.tone} style. Do NOT deviate.`,
   });
 
   try {
